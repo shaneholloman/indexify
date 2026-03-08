@@ -196,6 +196,20 @@ pub struct SchedulerUpdateRequest {
 }
 
 impl SchedulerUpdateRequest {
+    fn merge_request_state(&mut self, ctx_key: String, request_ctx: RequestCtx) {
+        // Preserve terminal snapshots against late non-terminal snapshots for
+        // the same request. This makes request completion monotonic across
+        // batched scheduler_update.extend(...) merges.
+        let should_preserve_existing = self
+            .updated_request_states
+            .get(&ctx_key)
+            .is_some_and(|existing| existing.outcome.is_some() && request_ctx.outcome.is_none());
+        if should_preserve_existing {
+            return;
+        }
+        self.updated_request_states.insert(ctx_key, request_ctx);
+    }
+
     /// Extends this SchedulerUpdateRequest with contents from another one
     pub fn extend(&mut self, other: SchedulerUpdateRequest) {
         self.new_allocations.extend(other.new_allocations);
@@ -212,8 +226,9 @@ impl SchedulerUpdateRequest {
                 .or_default()
                 .extend(function_call_ids);
         }
-        self.updated_request_states
-            .extend(other.updated_request_states);
+        for (ctx_key, request_ctx) in other.updated_request_states {
+            self.merge_request_state(ctx_key, request_ctx);
+        }
         self.new_state_changes.extend(other.new_state_changes);
 
         self.remove_executors.extend(other.remove_executors);
@@ -273,8 +288,7 @@ impl SchedulerUpdateRequest {
     /// Call this once after all mutations are done, before the scheduler update
     /// is consumed by `in_memory_state.update_state()` or persisted.
     pub fn add_request_state(&mut self, request_ctx: &RequestCtx) {
-        self.updated_request_states
-            .insert(request_ctx.key(), request_ctx.clone());
+        self.merge_request_state(request_ctx.key(), request_ctx.clone());
     }
 
     /// Adds a function call to the request context and tracks it as updated.
@@ -305,6 +319,128 @@ impl SchedulerUpdateRequest {
             }
         }
         function_runs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::SchedulerUpdateRequest;
+    use crate::{
+        data_model::{RequestCtxBuilder, RequestFailureReason, RequestOutcome},
+        state_store::{
+            request_events::{RequestStateChangeEvent, build_request_state_change_events},
+            requests::{RequestPayload, SchedulerUpdatePayload, StateMachineUpdateRequest},
+        },
+    };
+
+    fn request_ctx_with_outcome(
+        request_id: &str,
+        outcome: Option<RequestOutcome>,
+    ) -> crate::data_model::RequestCtx {
+        RequestCtxBuilder::default()
+            .namespace("ns".to_string())
+            .application_name("app".to_string())
+            .application_version("1.0.0".to_string())
+            .request_id(request_id.to_string())
+            .outcome(outcome)
+            .function_calls(HashMap::new())
+            .build()
+            .expect("request ctx")
+    }
+
+    #[test]
+    fn add_request_state_preserves_terminal_over_non_terminal() {
+        let mut update = SchedulerUpdateRequest::default();
+        let terminal = request_ctx_with_outcome(
+            "req-1",
+            Some(RequestOutcome::Failure(RequestFailureReason::RequestError)),
+        );
+        let non_terminal = request_ctx_with_outcome("req-1", None);
+
+        update.add_request_state(&terminal);
+        update.add_request_state(&non_terminal);
+
+        let merged = update
+            .updated_request_states
+            .get(&terminal.key())
+            .expect("request ctx exists");
+        assert!(matches!(
+            merged.outcome,
+            Some(RequestOutcome::Failure(RequestFailureReason::RequestError))
+        ));
+    }
+
+    #[test]
+    fn extend_preserves_terminal_over_non_terminal() {
+        let mut merged_update = SchedulerUpdateRequest::default();
+        let terminal = request_ctx_with_outcome(
+            "req-1",
+            Some(RequestOutcome::Failure(RequestFailureReason::RequestError)),
+        );
+        merged_update.add_request_state(&terminal);
+
+        let mut late_update = SchedulerUpdateRequest::default();
+        late_update.add_request_state(&request_ctx_with_outcome("req-1", None));
+
+        merged_update.extend(late_update);
+
+        let merged = merged_update
+            .updated_request_states
+            .get(&terminal.key())
+            .expect("request ctx exists");
+        assert!(matches!(
+            merged.outcome,
+            Some(RequestOutcome::Failure(RequestFailureReason::RequestError))
+        ));
+    }
+
+    #[test]
+    fn extend_allows_terminal_to_override_non_terminal() {
+        let mut first = SchedulerUpdateRequest::default();
+        first.add_request_state(&request_ctx_with_outcome("req-1", None));
+
+        let mut second = SchedulerUpdateRequest::default();
+        let terminal = request_ctx_with_outcome(
+            "req-1",
+            Some(RequestOutcome::Failure(RequestFailureReason::RequestError)),
+        );
+        second.add_request_state(&terminal);
+
+        first.extend(second);
+
+        let merged = first
+            .updated_request_states
+            .get(&terminal.key())
+            .expect("request ctx exists");
+        assert!(matches!(
+            merged.outcome,
+            Some(RequestOutcome::Failure(RequestFailureReason::RequestError))
+        ));
+    }
+
+    #[test]
+    fn merged_update_emits_request_finished_after_late_non_terminal_snapshot() {
+        let mut merged_update = SchedulerUpdateRequest::default();
+        let terminal = request_ctx_with_outcome(
+            "req-1",
+            Some(RequestOutcome::Failure(RequestFailureReason::RequestError)),
+        );
+        merged_update.add_request_state(&terminal);
+
+        let mut late_update = SchedulerUpdateRequest::default();
+        late_update.add_request_state(&request_ctx_with_outcome("req-1", None));
+        merged_update.extend(late_update);
+
+        let update_request = StateMachineUpdateRequest {
+            payload: RequestPayload::SchedulerUpdate(SchedulerUpdatePayload::new(merged_update)),
+        };
+        let events = build_request_state_change_events(&update_request);
+
+        assert!(events.iter().any(
+            |e| matches!(e, RequestStateChangeEvent::RequestFinished(event) if event.request_id == terminal.request_id)
+        ));
     }
 }
 
