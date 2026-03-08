@@ -17,7 +17,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 tokio = { version = "1.50.0", features = ["full"] }
 tokio-stream = { version = "0.1.18", features = ["sync"] }
-tokio-util = { version = "0.7.18", features = ["rt"] }
+tokio-util = { version = "0.7.18", features = ["rt", "time"] }
 async-broadcast = "0.7"
 async-stream = "0.3.6"
 async-trait = "0.1.89"
@@ -69,6 +69,7 @@ rand = "0.10.0"
 rayon = "1.10.0"
 url = "2.5.8"
 chrono = { version = "0.4.44", features = ["serde"] }
+croner = "2"
 strum = { version = "0.28.0", features = ["derive"] }
 derive_builder = "0.20.2"
 rust-embed = { version = "8.11.0", features = ["mime-guess"] }

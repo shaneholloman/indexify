@@ -89,6 +89,12 @@ pub struct Application {
     pub created_at: u64,
     #[serde(default)]
     pub entrypoint: Option<EntryPointManifest>,
+    #[serde(default)]
+    pub cron_schedule: Option<String>,
+    /// Next scheduled cron fire time (epoch milliseconds). Only present when
+    /// `cron_schedule` is set.
+    #[serde(default, skip_deserializing)]
+    pub next_cron_fire_time_ms: Option<u64>,
     // state is not something that a client should be able to set.
     // It's managed by the "change-state" internal endpoint.
     #[serde(default, skip_deserializing)]
@@ -154,6 +160,13 @@ impl Application {
             None
         };
 
+        // Validate cron expression early so the user gets a clear 400 error
+        if let Some(ref expr) = self.cron_schedule {
+            croner::Cron::new(expr).parse().map_err(|e| {
+                IndexifyAPIError::bad_request(&format!("Invalid cron_schedule '{expr}': {e}"))
+            })?;
+        }
+
         let application = ApplicationBuilder::default()
             .name(self.name)
             .namespace(self.namespace)
@@ -166,6 +179,7 @@ impl Application {
             .tombstoned(self.tombstoned)
             .state(self.state.into())
             .entrypoint(entrypoint)
+            .cron_schedule(self.cron_schedule)
             .build()
             .map_err(|e| {
                 IndexifyAPIError::bad_request(&format!("Failed to create application: {e}"))
@@ -190,6 +204,8 @@ impl From<data_model::Application> for Application {
             functions: nodes,
             created_at: application.created_at,
             tombstoned: application.tombstoned,
+            cron_schedule: application.cron_schedule,
+            next_cron_fire_time_ms: None,
             state: application.state.into(),
         }
     }

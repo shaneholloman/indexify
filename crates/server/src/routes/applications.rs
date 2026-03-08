@@ -188,14 +188,19 @@ pub async fn get_application(
     Path((namespace, name)): Path<(String, String)>,
     State(state): State<RouteState>,
 ) -> Result<Json<http_objects_v1::Application>, IndexifyAPIError> {
-    let application = state
-        .indexify_state
-        .reader()
+    let reader = state.indexify_state.reader();
+    let application = reader
         .get_application(&namespace, &name)
         .await
         .map_err(IndexifyAPIError::internal_error)?;
     if let Some(application) = application {
-        return Ok(Json(application.into()));
+        let mut app: http_objects_v1::Application = application.into();
+        if app.cron_schedule.is_some() &&
+            let Ok(Some(entry)) = reader.get_cron_schedule(&namespace, &name).await
+        {
+            app.next_cron_fire_time_ms = Some(entry.next_fire_time_ms);
+        }
+        return Ok(Json(app));
     }
     Err(IndexifyAPIError::not_found("Application not found")
         .with_label("namespace", namespace)

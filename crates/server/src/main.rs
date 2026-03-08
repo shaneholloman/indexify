@@ -13,6 +13,7 @@ mod executors;
 mod http_objects;
 mod http_objects_v1;
 mod indexify_ui;
+mod invoke_helper;
 mod metrics;
 mod middleware;
 mod processor;
@@ -34,6 +35,8 @@ mod integration_test;
 mod integration_test_blocking_calls;
 #[cfg(test)]
 mod integration_test_buffer;
+#[cfg(test)]
+mod integration_test_cron;
 #[cfg(test)]
 mod integration_test_executor_catalog;
 #[cfg(test)]
