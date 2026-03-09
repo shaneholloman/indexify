@@ -589,9 +589,6 @@ pub struct Application {
     #[serde(default)]
     #[builder(default)]
     pub entrypoint: Option<ApplicationEntryPoint>,
-    #[serde(default)]
-    #[builder(default)]
-    pub cron_schedule: Option<String>,
 }
 
 impl ApplicationBuilder {
@@ -634,7 +631,6 @@ impl Application {
         self.tags = update.tags;
         self.entrypoint = update.entrypoint;
         self.state = update.state;
-        self.cron_schedule = update.cron_schedule;
     }
 
     pub fn to_version(&self) -> Result<ApplicationVersion> {
@@ -769,27 +765,6 @@ impl Application {
         }
 
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CronScheduleEntry {
-    pub namespace: String,
-    pub application_name: String,
-    pub cron_expression: String,
-    pub next_fire_time_ms: u64,
-    pub last_fired_at_ms: Option<u64>,
-    pub created_at: u64,
-    pub enabled: bool,
-}
-
-impl CronScheduleEntry {
-    pub fn key(&self) -> String {
-        Self::key_from(&self.namespace, &self.application_name)
-    }
-
-    pub fn key_from(namespace: &str, application_name: &str) -> String {
-        format!("{namespace}|{application_name}")
     }
 }
 

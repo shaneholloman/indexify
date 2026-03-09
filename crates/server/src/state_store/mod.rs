@@ -19,7 +19,7 @@ use rocksdb::{ColumnFamilyDescriptor, Options};
 use serde::{Deserialize, Serialize};
 use state_machine::IndexifyObjectsColumns;
 use strum::IntoEnumIterator;
-use tokio::sync::{RwLock, mpsc, watch};
+use tokio::sync::{RwLock, watch};
 use tracing::{debug, error, info, span};
 
 use crate::{
@@ -117,8 +117,6 @@ pub struct IndexifyState {
     pub change_events_rx: watch::Receiver<()>,
     pub usage_events_tx: watch::Sender<()>,
     pub usage_events_rx: watch::Receiver<()>,
-    pub cron_events_tx: mpsc::UnboundedSender<CronEvent>,
-    pub cron_events_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<CronEvent>>>,
 
     pub metrics: Arc<StateStoreMetrics>,
     pub app_state: Arc<ArcSwap<AppState>>,
@@ -164,25 +162,8 @@ where
     driver::open_database(options, metrics).map_err(Into::into)
 }
 
-/// Targeted cron event sent to the CronProcessor so it can do a point read
-/// instead of a full CF scan.
-#[derive(Debug, Clone)]
-pub enum CronEvent {
-    /// A cron schedule was created or updated for this app.
-    Upserted {
-        namespace: String,
-        application_name: String,
-    },
-    /// A cron schedule was removed (app deleted or cron_schedule set to None).
-    Removed {
-        namespace: String,
-        application_name: String,
-    },
-}
-
 struct PersistentWriteResult {
     should_notify_usage_reporter: bool,
-    cron_event: Option<CronEvent>,
     /// Whether a payload was enqueued to the PayloadQueue for the scheduler.
     payload_enqueued: bool,
     /// Request state change events to broadcast to SSE and file dump workers.
@@ -227,7 +208,6 @@ impl IndexifyState {
 
         let (change_events_tx, change_events_rx) = watch::channel(());
         let (usage_events_tx, usage_events_rx) = watch::channel(());
-        let (cron_events_tx, cron_events_rx) = mpsc::unbounded_channel();
         let state_reader = scanner::StateReader::new(db.clone(), state_store_metrics.clone());
 
         let in_memory_state = InMemoryState::new(
@@ -296,8 +276,6 @@ impl IndexifyState {
             app_state,
             usage_events_tx,
             usage_events_rx,
-            cron_events_tx,
-            cron_events_rx: std::sync::Mutex::new(Some(cron_events_rx)),
             executor_connections: RwLock::new(HashMap::new()),
             executor_next_result_seq: RwLock::new(HashMap::new()),
             request_event_buffers,
@@ -358,12 +336,6 @@ impl IndexifyState {
                 error!(error = ?err, "failed to notify of usage event, ignoring");
             }
 
-            if let Some(cron_event) = write_result.cron_event &&
-                let Err(err) = self.cron_events_tx.send(cron_event)
-            {
-                error!(error = ?err, "failed to notify of cron event, ignoring");
-            }
-
             self.request_event_buffers
                 .push_events(write_result.request_state_changes)
                 .await;
@@ -421,7 +393,6 @@ impl IndexifyState {
         let txn = self.db.transaction();
 
         let mut should_notify_usage_reporter = false;
-        let mut cron_event: Option<CronEvent> = None;
 
         match &request.payload {
             RequestPayload::InvokeApplication(invoke_application_request) => {
@@ -451,7 +422,7 @@ impl IndexifyState {
                     .await?;
             }
             RequestPayload::CreateOrUpdateApplication(req) => {
-                let cron_modified = state_machine::create_or_update_application(
+                state_machine::create_or_update_application(
                     &txn,
                     req.application.clone(),
                     req.upgrade_requests_to_current_version,
@@ -459,38 +430,15 @@ impl IndexifyState {
                     current_clock,
                 )
                 .await?;
-                if cron_modified {
-                    let ns = req.application.namespace.clone();
-                    let app = req.application.name.clone();
-                    cron_event = Some(
-                        if req.application.cron_schedule.is_some() {
-                            CronEvent::Upserted {
-                                namespace: ns,
-                                application_name: app,
-                            }
-                        } else {
-                            CronEvent::Removed {
-                                namespace: ns,
-                                application_name: app,
-                            }
-                        },
-                    );
-                }
             }
             RequestPayload::DeleteApplicationRequest(request) => {
-                let had_cron = state_machine::delete_application(
+                state_machine::delete_application(
                     &txn,
                     &request.namespace,
                     &request.name,
                     current_clock,
                 )
                 .await?;
-                if had_cron {
-                    cron_event = Some(CronEvent::Removed {
-                        namespace: request.namespace.clone(),
-                        application_name: request.name.clone(),
-                    });
-                }
             }
             RequestPayload::DeleteRequestRequest(request) => {
                 state_machine::delete_request(&txn, request, current_clock).await?;
@@ -750,7 +698,6 @@ impl IndexifyState {
         Ok(PersistentWriteResult {
             payload_enqueued: should_enqueue,
             should_notify_usage_reporter,
-            cron_event,
             request_state_changes,
         })
     }
@@ -1718,7 +1665,6 @@ mod tests {
             "ExecutorCommandOutbox",
             "FunctionCallResultRoutes",
             "SchedulerCommandIntents",
-            "CronSchedules",
         ];
 
         let columns_iter = columns

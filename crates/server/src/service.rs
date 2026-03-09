@@ -28,7 +28,6 @@ use crate::{
     middleware::InstanceRequestSpan,
     processor::{
         application_processor::ApplicationProcessor,
-        cron_processor::CronProcessor,
         request_state_change_processor::RequestStateChangeProcessor,
         usage_processor::UsageProcessor,
     },
@@ -58,7 +57,6 @@ pub struct Service {
     pub application_processor: Arc<ApplicationProcessor>,
     pub usage_processor: Arc<UsageProcessor>,
     pub request_state_change_processor: Arc<RequestStateChangeProcessor>,
-    pub cron_processor: Arc<CronProcessor>,
     /// File-dump receiver and path, held until the processor worker is spawned.
     local_request_events_log: Option<(mpsc::UnboundedReceiver<RequestStateChangeEvent>, String)>,
 }
@@ -137,8 +135,6 @@ impl Service {
             blob_storage_registry.clone(),
         ));
 
-        let cron_processor = Arc::new(CronProcessor::new(indexify_state.clone()));
-
         Ok(Self {
             config,
             shutdown_tx,
@@ -149,7 +145,6 @@ impl Service {
             application_processor,
             usage_processor,
             request_state_change_processor,
-            cron_processor,
             local_request_events_log,
         })
     }
@@ -232,12 +227,6 @@ impl Service {
                     .await;
                 ().instrument(span.clone())
             };
-        });
-
-        let cron_processor = self.cron_processor.clone();
-        let shutdown_rx = self.shutdown_rx.clone();
-        tokio::spawn(async move {
-            cron_processor.start(shutdown_rx).await;
         });
 
         // Spawn monitoring task with shutdown receiver

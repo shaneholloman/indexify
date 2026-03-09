@@ -24,7 +24,6 @@ use crate::{
         Application,
         ApplicationVersion,
         ContainerPool,
-        CronScheduleEntry,
         ExecutorMetadata,
         FunctionCall,
         FunctionRun,
@@ -121,9 +120,6 @@ pub enum IndexifyObjectsColumns {
     // Scheduler command intents staging (pre-outbox).
     // intent|<seq:020> -> PersistedSchedulerCommandIntent
     SchedulerCommandIntents,
-
-    // Cron schedules - Namespace|ApplicationName -> CronScheduleEntry
-    CronSchedules,
 }
 
 pub(crate) async fn upsert_namespace(
@@ -558,16 +554,13 @@ async fn update_requests_for_application(
 }
 
 #[tracing::instrument(skip(txn, application, container_pools), fields(namespace = application.namespace, name = application.name, app_version = application.version))]
-/// Returns `true` if cron schedule state was modified (created, updated, or
-/// deleted a CronSchedules CF entry), so the caller can decide whether to
-/// notify the CronProcessor.
 pub(crate) async fn create_or_update_application(
     txn: &Transaction,
     application: Application,
     upgrade_existing_function_runs_to_current_version: bool,
     container_pools: &[ContainerPool],
     clock: u64,
-) -> Result<bool> {
+) -> Result<()> {
     let application_key = application.key();
 
     let existing_application = txn
@@ -577,11 +570,6 @@ pub(crate) async fn create_or_update_application(
         )
         .await?
         .map(|v| StateStoreEncoder::decode::<Application>(&v));
-
-    let old_cron_schedule = match &existing_application {
-        Some(Ok(app)) => app.cron_schedule.clone(),
-        _ => None,
-    };
 
     let mut new_application_version = match existing_application {
         Some(Ok(mut existing_application)) => {
@@ -629,129 +617,18 @@ pub(crate) async fn create_or_update_application(
         upsert_container_pool(txn, &pool, clock).await?;
     }
 
-    // Manage cron schedule CF entry — only notify when state actually changes
-    let cron_modified = application.cron_schedule != old_cron_schedule;
-    if let Some(ref cron_expr) = application.cron_schedule {
-        upsert_cron_schedule_for_app(
-            txn,
-            &application.namespace,
-            &application.name,
-            cron_expr,
-            clock,
-        )
-        .await?;
-    } else if old_cron_schedule.is_some() {
-        // Only delete if there was a previous cron schedule to remove
-        delete_cron_schedule(txn, &application.namespace, &application.name).await?;
-    }
-
     info!("finished creating/updating application");
-    Ok(cron_modified)
-}
-
-pub(crate) async fn upsert_cron_schedule_for_app(
-    txn: &Transaction,
-    namespace: &str,
-    application_name: &str,
-    cron_expression: &str,
-    clock: u64,
-) -> Result<()> {
-    let now_ms = get_epoch_time_in_ms();
-    let next_fire_time_ms = compute_next_fire_time(cron_expression, now_ms)?;
-
-    // Check for existing entry to preserve last_fired_at_ms
-    let key = CronScheduleEntry::key_from(namespace, application_name);
-    let existing = txn
-        .get(
-            IndexifyObjectsColumns::CronSchedules.as_ref(),
-            key.as_bytes(),
-        )
-        .await?
-        .and_then(|v| StateStoreEncoder::decode::<CronScheduleEntry>(&v).ok());
-
-    let entry = CronScheduleEntry {
-        namespace: namespace.to_string(),
-        application_name: application_name.to_string(),
-        cron_expression: cron_expression.to_string(),
-        next_fire_time_ms,
-        last_fired_at_ms: existing.and_then(|e| e.last_fired_at_ms),
-        created_at: clock,
-        enabled: true,
-    };
-
-    put_cron_schedule_entry(txn, &entry).await
-}
-
-/// Deletes a cron schedule entry. Returns `true` if an entry existed.
-pub(crate) async fn delete_cron_schedule(
-    txn: &Transaction,
-    namespace: &str,
-    application_name: &str,
-) -> Result<bool> {
-    let key = CronScheduleEntry::key_from(namespace, application_name);
-    let existed = txn
-        .get(
-            IndexifyObjectsColumns::CronSchedules.as_ref(),
-            key.as_bytes(),
-        )
-        .await?
-        .is_some();
-    if existed {
-        txn.delete(
-            IndexifyObjectsColumns::CronSchedules.as_ref(),
-            key.as_bytes(),
-        )
-        .await?;
-    }
-    Ok(existed)
-}
-
-/// Compute the next fire time in milliseconds from a cron expression, relative
-/// to a given time.
-pub(crate) fn compute_next_fire_time(cron_expression: &str, from_ms: u64) -> Result<u64> {
-    use chrono::{TimeZone, Utc};
-    let cron = croner::Cron::new(cron_expression)
-        .parse()
-        .map_err(|e| anyhow!("invalid cron expression '{}': {}", cron_expression, e))?;
-    let from_dt = Utc
-        .timestamp_millis_opt(from_ms as i64)
-        .single()
-        .ok_or_else(|| anyhow!("invalid timestamp {from_ms}"))?;
-    let next = cron
-        .find_next_occurrence(&from_dt, false)
-        .map_err(|e| anyhow!("failed to compute next cron occurrence: {e}"))?;
-    Ok(next.timestamp_millis() as u64)
-}
-
-/// Persist a CronScheduleEntry to the CronSchedules CF.
-/// Used by both upsert_cron_schedule_for_app (main write path) and
-/// the CronProcessor's reschedule_after_fire.
-pub(crate) async fn put_cron_schedule_entry(
-    txn: &Transaction,
-    entry: &CronScheduleEntry,
-) -> Result<()> {
-    let serialized = StateStoreEncoder::encode(entry)?;
-    txn.put(
-        IndexifyObjectsColumns::CronSchedules.as_ref(),
-        entry.key().as_bytes(),
-        &serialized,
-    )
-    .await?;
     Ok(())
 }
 
 #[tracing::instrument(skip(txn), fields(namespace = namespace, name = name))]
-/// Returns `true` if a cron schedule entry was deleted along with the app.
 pub async fn delete_application(
     txn: &Transaction,
     namespace: &str,
     name: &str,
     clock: u64,
-) -> Result<bool> {
+) -> Result<()> {
     info!("deleting application");
-    // Remove cron schedule if any
-    let had_cron = delete_cron_schedule(txn, namespace, name).await?;
-
     txn.delete(
         IndexifyObjectsColumns::Applications.as_ref(),
         Application::key_from(namespace, name).as_bytes(),
@@ -811,7 +688,7 @@ pub async fn delete_application(
     let pool_key_prefix = format!("{}|{}|", namespace, name);
     delete_function_pools_by_prefix(txn, &pool_key_prefix).await?;
 
-    Ok(had_cron)
+    Ok(())
 }
 
 #[tracing::instrument(skip(txn, sandbox), fields(namespace = sandbox.namespace, sandbox_id = %sandbox.id))]

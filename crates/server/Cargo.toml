@@ -66,7 +66,6 @@ rand.workspace = true
 rayon.workspace = true
 url.workspace = true
 chrono.workspace = true
-croner.workspace = true
 strum.workspace = true
 derive_builder.workspace = true
 rust-embed.workspace = true
