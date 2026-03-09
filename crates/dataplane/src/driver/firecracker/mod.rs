@@ -549,7 +549,7 @@ impl ProcessDriver for FirecrackerDriver {
 
         // 5. Build kernel boot args
         let boot_args = format!(
-            "console=ttyS0 reboot=k panic=1 pci=off \
+            "reboot=k panic=1 pci=off 8250.nr_uarts=0 \
              ip={}::{}:{}::eth0:off \
              init=/sbin/indexify-init",
             cni_result.guest_ip, self.guest_gateway, self.guest_netmask,
@@ -606,9 +606,8 @@ impl ProcessDriver for FirecrackerDriver {
             .kill_on_drop(false)
             // Put Firecracker in its own process group so terminal Ctrl+C
             // (SIGINT to the foreground pgrp) only reaches the dataplane,
-            // not the child VM processes.  stdin must be /dev/null too —
-            // Firecracker reads stdin for serial console input, and a
-            // background pgrp reading from the terminal receives SIGTTIN.
+            // not the child VM processes. stdin still needs to be /dev/null
+            // so the VMM never attempts to read from the controlling terminal.
             .process_group(0)
             .spawn()
         {

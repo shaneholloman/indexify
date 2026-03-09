@@ -41,19 +41,12 @@ if [ -f /etc/indexify-env ]; then
     set +a
 fi
 
-# 3. Configure networking from kernel ip= boot param
+# 3. Use the kernel ip= boot param for early network setup and only
+#    generate resolv.conf in userspace.
 ip_param=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ip=' | head -1)
 
 if [ -n "$ip_param" ]; then
-    client_ip=$(echo "$ip_param" | cut -d= -f2 | cut -d: -f1)
     gateway=$(echo "$ip_param" | cut -d: -f3)
-    netmask=$(echo "$ip_param" | cut -d: -f4)
-    device=$(echo "$ip_param" | cut -d: -f6)
-    [ -z "$device" ] && device="eth0"
-
-    ip addr add "${client_ip}/${netmask}" dev "$device" 2>/dev/null || true
-    ip link set "$device" up 2>/dev/null || true
-    [ -n "$gateway" ] && ip route add default via "$gateway" dev "$device" 2>/dev/null || true
 
     rm -f /etc/resolv.conf 2>/dev/null || true
     : > /etc/resolv.conf
