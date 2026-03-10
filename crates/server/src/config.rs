@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::{blob_store::BlobStorageConfig, state_store::driver::rocksdb::RocksDBConfig};
 
 const LOCAL_ENV: &str = "local";
-pub const DEFAULT_SANDBOX_IMAGE: &str = "python:3.14-slim";
+pub const DEFAULT_SANDBOX_IMAGE: &str = "ubuntu:24.04";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
