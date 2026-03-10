@@ -189,7 +189,7 @@ async fn start_process(
             error!(error = %e, "Failed to start process");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(ErrorResponse::new(e.to_string())),
+                axum::Json(ErrorResponse::new(format!("{:#}", e))),
             )
                 .into_response()
         }
@@ -231,7 +231,7 @@ async fn kill_process(State(state): State<AppState>, Path(pid): Path<u32>) -> im
             } else {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    axum::Json(ErrorResponse::new(e.to_string())),
+                    axum::Json(ErrorResponse::new(format!("{:#}", e))),
                 )
                     .into_response()
             }
@@ -259,7 +259,7 @@ async fn send_signal(
             } else {
                 (
                     StatusCode::BAD_REQUEST,
-                    axum::Json(ErrorResponse::new(e.to_string())),
+                    axum::Json(ErrorResponse::new(format!("{:#}", e))),
                 )
                     .into_response()
             }
@@ -292,7 +292,7 @@ async fn write_stdin(
                 (
                     StatusCode::BAD_REQUEST,
                     axum::Json(ErrorResponse::with_code(
-                        e.to_string(),
+                        format!("{:#}", e),
                         "STDIN_NOT_WRITABLE",
                     )),
                 )
@@ -300,7 +300,7 @@ async fn write_stdin(
             } else {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    axum::Json(ErrorResponse::new(e.to_string())),
+                    axum::Json(ErrorResponse::new(format!("{:#}", e))),
                 )
                     .into_response()
             }
@@ -324,7 +324,7 @@ async fn close_stdin(State(state): State<AppState>, Path(pid): Path<u32>) -> imp
             } else {
                 (
                     StatusCode::BAD_REQUEST,
-                    axum::Json(ErrorResponse::new(e.to_string())),
+                    axum::Json(ErrorResponse::new(format!("{:#}", e))),
                 )
                     .into_response()
             }
@@ -348,7 +348,7 @@ async fn get_stdout(State(state): State<AppState>, Path(pid): Path<u32>) -> impl
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(ErrorResponse::new(e.to_string())),
+            axum::Json(ErrorResponse::new(format!("{:#}", e))),
         )
             .into_response(),
     }
@@ -366,7 +366,7 @@ async fn get_stderr(State(state): State<AppState>, Path(pid): Path<u32>) -> impl
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(ErrorResponse::new(e.to_string())),
+            axum::Json(ErrorResponse::new(format!("{:#}", e))),
         )
             .into_response(),
     }
@@ -385,7 +385,7 @@ async fn get_output(State(state): State<AppState>, Path(pid): Path<u32>) -> impl
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(ErrorResponse::new(e.to_string())),
+            axum::Json(ErrorResponse::new(format!("{:#}", e))),
         )
             .into_response(),
     }
@@ -405,7 +405,7 @@ async fn follow_stdout(State(state): State<AppState>, Path(pid): Path<u32>) -> R
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(ErrorResponse::new(e.to_string())),
+            axum::Json(ErrorResponse::new(format!("{:#}", e))),
         )
             .into_response(),
     }
@@ -421,7 +421,7 @@ async fn follow_stderr(State(state): State<AppState>, Path(pid): Path<u32>) -> R
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(ErrorResponse::new(e.to_string())),
+            axum::Json(ErrorResponse::new(format!("{:#}", e))),
         )
             .into_response(),
     }
@@ -437,7 +437,7 @@ async fn follow_output(State(state): State<AppState>, Path(pid): Path<u32>) -> R
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(ErrorResponse::new(e.to_string())),
+            axum::Json(ErrorResponse::new(format!("{:#}", e))),
         )
             .into_response(),
     }
@@ -669,7 +669,7 @@ async fn create_pty_session(
             } else {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    axum::Json(ErrorResponse::new(e.to_string())),
+                    axum::Json(ErrorResponse::new(format!("{:#}", e))),
                 )
                     .into_response()
             }
@@ -718,7 +718,7 @@ async fn kill_pty_session(
             } else {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    axum::Json(ErrorResponse::new(e.to_string())),
+                    axum::Json(ErrorResponse::new(format!("{:#}", e))),
                 )
                     .into_response()
             }
@@ -750,7 +750,7 @@ async fn resize_pty(
             } else {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    axum::Json(ErrorResponse::new(e.to_string())),
+                    axum::Json(ErrorResponse::new(format!("{:#}", e))),
                 )
                     .into_response()
             }
