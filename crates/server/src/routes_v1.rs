@@ -10,6 +10,7 @@ use axum::{
 };
 use base64::prelude::*;
 use containers::list_application_containers;
+use cron::{create_cron_schedule, delete_cron_schedule, list_cron_schedules};
 use download::download_request_error;
 use invoke::invoke_application_with_object_v1;
 use sandbox_pools::{
@@ -47,6 +48,7 @@ use crate::{
     routes::{
         applications::{self, create_or_update_application},
         containers,
+        cron,
         download::{
             self,
             v1_download_fn_output_payload,
@@ -103,6 +105,10 @@ use crate::{
             snapshots::delete_snapshot,
             // Container endpoints
             containers::list_application_containers,
+            // Cron schedule endpoints
+            cron::create_cron_schedule,
+            cron::list_cron_schedules,
+            cron::delete_cron_schedule,
         ),
         components(
             schemas(
@@ -140,6 +146,11 @@ use crate::{
                 // Container schemas
                 containers::ContainerInfo,
                 containers::ListContainersResponse,
+                // Cron schedule schemas
+                cron::CreateCronScheduleHttpRequest,
+                cron::CreateCronScheduleResponse,
+                cron::CronScheduleInfo,
+                cron::ListCronSchedulesResponse,
             )
         ),
         tags(
@@ -282,6 +293,17 @@ fn v1_namespace_routes(route_state: RouteState) -> Router {
         .route(
             "/sandbox-pools/{pool_id}/sandboxes",
             post(create_pool_sandbox).with_state(route_state.clone()),
+        )
+        // Cron schedule routes
+        .route(
+            "/applications/{application}/cron-schedules",
+            post(create_cron_schedule)
+                .get(list_cron_schedules)
+                .with_state(route_state.clone()),
+        )
+        .route(
+            "/applications/{application}/cron-schedules/{schedule_id}",
+            delete(delete_cron_schedule).with_state(route_state.clone()),
         );
 
     Router::new()

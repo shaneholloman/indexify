@@ -24,6 +24,8 @@ use crate::{
         Application,
         ApplicationVersion,
         ContainerPool,
+        CronScheduleEntry,
+        DataPayload,
         ExecutorMetadata,
         FunctionCall,
         FunctionRun,
@@ -120,6 +122,9 @@ pub enum IndexifyObjectsColumns {
     // Scheduler command intents staging (pre-outbox).
     // intent|<seq:020> -> PersistedSchedulerCommandIntent
     SchedulerCommandIntents,
+
+    // Cron schedules - Namespace|ApplicationName|ScheduleId -> CronScheduleEntry
+    CronSchedules,
 }
 
 pub(crate) async fn upsert_namespace(
@@ -621,14 +626,152 @@ pub(crate) async fn create_or_update_application(
     Ok(())
 }
 
+/// Creates a new cron schedule entry with a caller-provided ID.
+pub(crate) async fn create_cron_schedule(
+    txn: &Transaction,
+    id: &str,
+    namespace: &str,
+    application_name: &str,
+    cron_expression: &str,
+    input: Option<DataPayload>,
+    clock: u64,
+) -> Result<()> {
+    let now_ms = get_epoch_time_in_ms();
+    let next_fire_time_ms = compute_next_fire_time(cron_expression, now_ms)?;
+
+    let entry = CronScheduleEntry {
+        id: id.to_string(),
+        namespace: namespace.to_string(),
+        application_name: application_name.to_string(),
+        cron_expression: cron_expression.to_string(),
+        input,
+        next_fire_time_ms,
+        last_fired_at_ms: None,
+        created_at: clock,
+        enabled: true,
+    };
+
+    put_cron_schedule_entry(txn, &entry).await
+}
+
+/// Deletes a specific cron schedule entry by ID. Returns `true` if it existed.
+pub(crate) async fn delete_cron_schedule_by_id(
+    txn: &Transaction,
+    namespace: &str,
+    application_name: &str,
+    schedule_id: &str,
+) -> Result<bool> {
+    let key = CronScheduleEntry::key_from_id(namespace, application_name, schedule_id);
+    let existed = txn
+        .get(
+            IndexifyObjectsColumns::CronSchedules.as_ref(),
+            key.as_bytes(),
+        )
+        .await?
+        .is_some();
+    if existed {
+        txn.delete(
+            IndexifyObjectsColumns::CronSchedules.as_ref(),
+            key.as_bytes(),
+        )
+        .await?;
+    }
+    Ok(existed)
+}
+
+/// Deletes all cron schedule entries for an application. Returns `true` if any
+/// existed.
+pub(crate) async fn delete_cron_schedules_for_app(
+    txn: &Transaction,
+    namespace: &str,
+    application_name: &str,
+) -> Result<bool> {
+    let prefix = CronScheduleEntry::key_prefix_for_app(namespace, application_name);
+    let mut deleted_any = false;
+    for iter in txn
+        .iter(
+            IndexifyObjectsColumns::CronSchedules.as_ref(),
+            prefix.clone().into_bytes(),
+        )
+        .await
+    {
+        let (key, _) = iter?;
+        let key_str = std::str::from_utf8(&key).unwrap_or("");
+        if !key_str.starts_with(&prefix) {
+            break;
+        }
+        txn.delete(IndexifyObjectsColumns::CronSchedules.as_ref(), &key)
+            .await?;
+        deleted_any = true;
+    }
+    Ok(deleted_any)
+}
+
+/// Advances a cron schedule entry: sets last_fired_at_ms and computes the next
+/// fire time. Used by the CronProcessor via the standard `write()` path.
+pub(crate) async fn advance_cron_schedule(
+    txn: &Transaction,
+    namespace: &str,
+    application_name: &str,
+    schedule_id: &str,
+    cron_expression: &str,
+    fired_at_ms: u64,
+) -> Result<()> {
+    let key = CronScheduleEntry::key_from_id(namespace, application_name, schedule_id);
+    let data = txn
+        .get(
+            IndexifyObjectsColumns::CronSchedules.as_ref(),
+            key.as_bytes(),
+        )
+        .await?
+        .ok_or_else(|| anyhow!("cron schedule not found: {key}"))?;
+    let mut entry: CronScheduleEntry = StateStoreEncoder::decode(&data)?;
+    entry.last_fired_at_ms = Some(fired_at_ms);
+    entry.next_fire_time_ms = compute_next_fire_time(cron_expression, fired_at_ms)?;
+    put_cron_schedule_entry(txn, &entry).await
+}
+
+/// Compute the next fire time in milliseconds from a cron expression, relative
+/// to a given time.
+pub(crate) fn compute_next_fire_time(cron_expression: &str, from_ms: u64) -> Result<u64> {
+    use chrono::{TimeZone, Utc};
+    let cron = croner::Cron::new(cron_expression)
+        .parse()
+        .map_err(|e| anyhow!("invalid cron expression '{}': {}", cron_expression, e))?;
+    let from_dt = Utc
+        .timestamp_millis_opt(from_ms as i64)
+        .single()
+        .ok_or_else(|| anyhow!("invalid timestamp {from_ms}"))?;
+    let next = cron
+        .find_next_occurrence(&from_dt, false)
+        .map_err(|e| anyhow!("failed to compute next cron occurrence: {e}"))?;
+    Ok(next.timestamp_millis() as u64)
+}
+
+/// Persist a CronScheduleEntry to the CronSchedules CF.
+async fn put_cron_schedule_entry(txn: &Transaction, entry: &CronScheduleEntry) -> Result<()> {
+    let serialized = StateStoreEncoder::encode(entry)?;
+    txn.put(
+        IndexifyObjectsColumns::CronSchedules.as_ref(),
+        entry.key().as_bytes(),
+        &serialized,
+    )
+    .await?;
+    Ok(())
+}
+
 #[tracing::instrument(skip(txn), fields(namespace = namespace, name = name))]
+/// Returns `true` if any cron schedule entries were deleted along with the app.
 pub async fn delete_application(
     txn: &Transaction,
     namespace: &str,
     name: &str,
     clock: u64,
-) -> Result<()> {
+) -> Result<bool> {
     info!("deleting application");
+    // Remove all cron schedules for this app
+    let had_cron = delete_cron_schedules_for_app(txn, namespace, name).await?;
+
     txn.delete(
         IndexifyObjectsColumns::Applications.as_ref(),
         Application::key_from(namespace, name).as_bytes(),
@@ -688,7 +831,7 @@ pub async fn delete_application(
     let pool_key_prefix = format!("{}|{}|", namespace, name);
     delete_function_pools_by_prefix(txn, &pool_key_prefix).await?;
 
-    Ok(())
+    Ok(had_cron)
 }
 
 #[tracing::instrument(skip(txn, sandbox), fields(namespace = sandbox.namespace, sandbox_id = %sandbox.id))]

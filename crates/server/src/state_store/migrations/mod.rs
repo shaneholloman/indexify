@@ -30,4 +30,6 @@ mod v20_fix_container_pool_tombstoned_field;
 mod v21_fix_sandbox_allow_unauthenticated_field;
 mod v22_sandbox_exposed_ports;
 mod v23_container_pool_exposed_ports;
+mod v24_application_cron_schedule;
+mod v25_cron_schedule_decoupling;
 mod v9_separate_executor_and_app_state_changes;

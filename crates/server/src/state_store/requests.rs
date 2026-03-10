@@ -143,6 +143,11 @@ pub enum RequestPayload {
     /// atomically.
     DataplaneResults(DataplaneResultsRequest),
 
+    // Cron schedule management
+    CreateCronSchedule(CreateCronScheduleRequest),
+    DeleteCronSchedule(DeleteCronScheduleRequest),
+    AdvanceCronSchedule(AdvanceCronScheduleRequest),
+
     // App Processor -> State Machine requests
     SchedulerUpdate(SchedulerUpdatePayload),
     DeleteApplicationRequest(DeleteApplicationRequest),
@@ -584,6 +589,31 @@ pub struct DeleteContainerPoolRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataplaneResultsRequest {
     pub event: DataplaneResultsIngestedEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateCronScheduleRequest {
+    pub id: String,
+    pub namespace: String,
+    pub application_name: String,
+    pub cron_expression: String,
+    pub input: Option<crate::data_model::DataPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteCronScheduleRequest {
+    pub namespace: String,
+    pub application_name: String,
+    pub schedule_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvanceCronScheduleRequest {
+    pub namespace: String,
+    pub application_name: String,
+    pub schedule_id: String,
+    pub cron_expression: String,
+    pub fired_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

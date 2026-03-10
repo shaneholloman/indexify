@@ -13,6 +13,7 @@ use crate::{
         Application,
         ApplicationVersion,
         ContainerPool,
+        CronScheduleEntry,
         ExecutorMetadata,
         FunctionCall,
         FunctionRun,
@@ -681,6 +682,57 @@ impl StateReader {
             }
         }
         Ok(payloads)
+    }
+
+    pub async fn get_all_cron_schedules(&self) -> Result<Vec<CronScheduleEntry>> {
+        let kvs = &[KeyValue::new("op", "get_all_cron_schedules")];
+        let _timer = Timer::start_with_labels(&self.metrics.state_read, kvs);
+
+        let (entries, _) = self
+            .get_rows_from_cf_with_limits::<CronScheduleEntry>(
+                &[],
+                None,
+                IndexifyObjectsColumns::CronSchedules,
+                None,
+            )
+            .await?;
+        Ok(entries)
+    }
+
+    pub async fn get_cron_schedule(
+        &self,
+        namespace: &str,
+        application_name: &str,
+        schedule_id: &str,
+    ) -> Result<Option<CronScheduleEntry>> {
+        let kvs = &[KeyValue::new("op", "get_cron_schedule")];
+        let _timer = Timer::start_with_labels(&self.metrics.state_read, kvs);
+
+        let key = CronScheduleEntry::key_from_id(namespace, application_name, schedule_id);
+        let entry = self
+            .get_from_cf(&IndexifyObjectsColumns::CronSchedules, key.as_bytes())
+            .await?;
+        Ok(entry)
+    }
+
+    pub async fn get_cron_schedules_for_app(
+        &self,
+        namespace: &str,
+        application_name: &str,
+    ) -> Result<Vec<CronScheduleEntry>> {
+        let kvs = &[KeyValue::new("op", "get_cron_schedules_for_app")];
+        let _timer = Timer::start_with_labels(&self.metrics.state_read, kvs);
+
+        let prefix = CronScheduleEntry::key_prefix_for_app(namespace, application_name);
+        let (entries, _) = self
+            .get_rows_from_cf_with_limits::<CronScheduleEntry>(
+                prefix.as_bytes(),
+                None,
+                IndexifyObjectsColumns::CronSchedules,
+                None,
+            )
+            .await?;
+        Ok(entries)
     }
 }
 #[cfg(test)]

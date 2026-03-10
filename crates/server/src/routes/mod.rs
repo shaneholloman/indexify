@@ -1,6 +1,7 @@
 pub mod applications;
 pub mod common;
 pub mod containers;
+pub mod cron;
 pub mod download;
 pub mod invoke;
 #[cfg(test)]

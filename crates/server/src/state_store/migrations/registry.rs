@@ -18,6 +18,8 @@ use crate::state_store::migrations::{
     v21_fix_sandbox_allow_unauthenticated_field::V21FixSandboxAllowUnauthenticatedField,
     v22_sandbox_exposed_ports::V22SandboxExposedPorts,
     v23_container_pool_exposed_ports::V23ContainerPoolExposedPorts,
+    v24_application_cron_schedule::V24ApplicationCronSchedule,
+    v25_cron_schedule_decoupling::V25CronScheduleDecoupling,
 };
 // Import all migration implementations
 
@@ -52,6 +54,8 @@ impl MigrationRegistry {
         registry.register(Box::new(V21FixSandboxAllowUnauthenticatedField));
         registry.register(Box::new(V22SandboxExposedPorts));
         registry.register(Box::new(V23ContainerPoolExposedPorts));
+        registry.register(Box::new(V24ApplicationCronSchedule));
+        registry.register(Box::new(V25CronScheduleDecoupling));
 
         // Sort and validate migrations
         registry.sort_and_validate()?;

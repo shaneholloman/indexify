@@ -108,6 +108,31 @@ pub struct ServerConfig {
     /// older than this are automatically failed by the vacuum. 0 disables.
     #[serde_inline_default(600u64)]
     pub snapshot_timeout_secs: u64,
+    /// Cron scheduling configuration.
+    #[serde(default)]
+    pub cron: CronConfig,
+}
+
+#[serde_inline_default]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronConfig {
+    /// Maximum number of cron schedules allowed per application.
+    #[serde_inline_default(100u32)]
+    pub max_schedules_per_app: u32,
+    /// Minimum interval in seconds between two consecutive cron fires.
+    /// Cron expressions that would fire more frequently than this are rejected.
+    /// 0 disables the check.
+    #[serde_inline_default(60u64)]
+    pub min_interval_secs: u64,
+}
+
+impl Default for CronConfig {
+    fn default() -> Self {
+        Self {
+            max_schedules_per_app: 100,
+            min_interval_secs: 60,
+        }
+    }
 }
 
 impl Default for ServerConfig {
@@ -132,6 +157,7 @@ impl Default for ServerConfig {
             cluster_vacuum_interval_secs: 60,
             snapshot_storage_path: None,
             snapshot_timeout_secs: 600,
+            cron: CronConfig::default(),
         }
     }
 }

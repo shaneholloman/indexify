@@ -768,6 +768,36 @@ impl Application {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronScheduleEntry {
+    pub id: String,
+    pub namespace: String,
+    pub application_name: String,
+    pub cron_expression: String,
+    /// Optional input payload stored in blob storage, passed to the application
+    /// entrypoint on each cron invocation.
+    #[serde(default)]
+    pub input: Option<DataPayload>,
+    pub next_fire_time_ms: u64,
+    pub last_fired_at_ms: Option<u64>,
+    pub created_at: u64,
+    pub enabled: bool,
+}
+
+impl CronScheduleEntry {
+    pub fn key(&self) -> String {
+        Self::key_from_id(&self.namespace, &self.application_name, &self.id)
+    }
+
+    pub fn key_from_id(namespace: &str, application_name: &str, id: &str) -> String {
+        format!("{namespace}|{application_name}|{id}")
+    }
+
+    pub fn key_prefix_for_app(namespace: &str, application_name: &str) -> String {
+        format!("{namespace}|{application_name}|")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Builder)]
 pub struct ApplicationVersion {
     pub namespace: String,
@@ -858,7 +888,7 @@ impl ApplicationVersion {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Builder)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Builder, utoipa::ToSchema)]
 pub struct DataPayload {
     #[builder(default = "self.default_id()")]
     pub id: String,
