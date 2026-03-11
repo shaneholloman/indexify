@@ -25,7 +25,11 @@ use crate::{
     },
 };
 
-/// Legacy Application layout WITH `cron_schedule` field (v24 schema).
+/// Legacy Application layout matching v24 schema (no `cron_schedule` field).
+///
+/// The v24 migration re-encoded applications using the current `Application`
+/// struct, which does not include `cron_schedule` (it was reverted in commit
+/// 2ec829e7). So the persisted v24 records do NOT contain `cron_schedule`.
 #[derive(Debug, Deserialize, Serialize)]
 struct V24Application {
     namespace: String,
@@ -48,8 +52,6 @@ struct V24Application {
     updated_at_clock: Option<u64>,
     #[serde(default)]
     entrypoint: Option<ApplicationEntryPoint>,
-    #[serde(default)]
-    cron_schedule: Option<String>,
 }
 
 /// Legacy CronScheduleEntry without `id` and `input` fields (v24 schema).
